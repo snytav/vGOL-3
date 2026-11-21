@@ -1,0 +1,121 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
+
+\definecolor{codeblue}{rgb}{0.1,0.2,0.6}
+\definecolor{codegreen}{rgb}{0.1,0.5,0.1}
+\definecolor{codegray}{rgb}{0.4,0.4,0.4}
+
+\lstset{
+    backgroundcolor=\color{gray!5},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{purple},
+    basicstyle=\ttfamily\small,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    frame=single
+}
+
+\title{Incremental Development and Physical Verification Plan \\ for an MPI+OpenMP Parallel Particle-in-Cell Code \\ \large Targeted at Anomalous Heat Conductivity in GOL-3-class Open Traps}
+\author{Advanced Plasma Transport Simulation Workflow}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document outlines a structured, 6-step incremental engineering roadmap to construct a high-fidelity, high-performance standalone 1D3V/2D3V electromagnetic parallel Particle-In-Cell (PIC) code. The code utilizes hybrid distributed-shared memory parallelism (\texttt{MPI} + \texttt{OpenMP}) to target the kinetic simulation of beam-plasma interactions, strong Langmuir microturbulence, and anomalous heat conductivity suppression. Crucially, each step introduces an explicit physical test case with quantitative validation metrics to ensure codebase correctness before proceeding.
+\end{abstract}
+
+\section{The Architectural Dilemma and Roadmap Strategy}
+Simulating the microscopic electron transport mechanisms observed in the GOL-3 multi-mirror trap requires capturing non-Maxwellian velocity distribution functions and strong electrostatic wave-particle scattering. This necessitates a code capable of resolving sub-micrometer Debye lengths (\(\lambda_D\)) while pushing relativistic beam electrons (\(v \approx c\)). 
+
+To bypass complex cluster compilation constraints, this roadmap strictly avoids heavyweight modern libraries (like AMReX or WarpX) and implements high-order solvers and diagnostics using native \texttt{C++17} coupled with \texttt{MPI} and \texttt{OpenMP}. Developing components incrementally with integrated physical checks guarantees bugs are trapped immediately at their source component.
+
+\section{Step-by-Step Incremental Blueprint}
+
+\subsection{Step 1: The Relativistic Boris-Vay Pusher (Serial Physics Core)}
+\textbf{Goal:} Implement the fundamental particle kinematics engine. Standard pushers (like the default Boris algorithm) introduce non-physical \(\mathbf{E}\times\mathbf{B}\) drifts when particle speeds approach the velocity of light under intense electromagnetic constraints. A modern Boris-Vay trajectory pusher is required to track highly relativistic beam populations accurately.
+
+\medskip
+\noindent\textbf{Physics Check (Single-Particle Cyclotron Orbit):} Initialize a single test electron with an extreme perpendicular velocity component corresponding to a high Lorentz factor (\(\gamma = 2.0\)) embedded inside a static, completely uniform background magnetic field (\(\mathbf{B}_0 = B_0 \hat{\mathbf{z}}\)) with zero electric field.
+
+\medskip
+\noindent\textbf{Verification Criterion:} Over a trajectory history of \(10^4\) steps, the particle must execute a mathematically closed circular path. Extract the spatial coordinates and calculate the resulting radius (\(R_L\)) and cyclotron frequency (\(\omega_c\)). They must match the relativistic analytical solutions:
+\begin{equation}
+R_L = \frac{\gamma m_e v_\perp}{|q_e| B_0}, \quad \omega_c = \frac{|q_e| B_0}{\gamma m_e}
+\end{equation}
+The derived measurements must align within a strict floating-point tolerance threshold of \(<0.1\%\), and total particle energy (\(\gamma\)) must remain exactly invariant over time.
+
+\subsection{Step 2: High-Order Charge Deposition and Field Solver (Serial Grid Core)}
+\textbf{Goal:} Build out the self-consistent field mesh routines. Standard first-order linear interpolation creates immense digital noise at small spatial scales, triggering severe artificial numerical grid heating that ruins thermal transport computations. This step implements 2nd-order (quadratic) or 3rd-order (cubic spline) spatial shape functions alongside a direct finite-difference or spectral Poisson field solver.
+
+\medskip
+\noindent\textbf{Physics Check (Electrostatic Plasma Oscillations):} Instantiate a uniform thermal plasma grid background. Introduce a subtle, coherent sinusoidal spatial density perturbation to the electron population:
+\begin{equation}
+n_e(x) = n_0 \left[1 + \delta \sin(k x)\right]
+\end{equation}
+Freeze the position of ions to act as an unmoving, charge-neutralizing background substrate.
+
+\medskip
+\noindent\textbf{Verification Criterion:} Allow the simulation to advance. Monitor the total electric field energy density across the domain over time. The field must oscillate macroscopically at exactly the cold electron plasma frequency:
+\begin{equation}
+\omega_{pe} = \sqrt{\frac{n_0 q_e^2}{\epsilon_0 m_e}}
+\end{equation}
+Execute an in-situ Fast Fourier Transform (FFT) on the E-field time history to verify the spectral peak maps directly to \(\omega_{pe}\), and confirm that numerical temperature grid heating remains flat over a timeline of \(1000\,\omega_{pe}^{-1}\).
+
+\subsection{Step 3: Shared-Memory Parallelization via OpenMP}
+\textbf{Goal:} Parallelize the inner loop iterations (particle pushing, current/charge deposition, and field interpolation mapping) across the multiple CPU execution cores of a single cluster node. Resolve multithreaded data race conditions during deposition phases using memory reductions or atomic addition operations.
+
+\medskip
+\noindent\textbf{Physics Check (Two-Stream Instability Growth Rate):} Inject a cold, high-speed relativistic electron beam straight through a stationary background core plasma, leveraging the newly implemented OpenMP loop schedules. This environment drives the initial linear development phase of the two-stream plasma instability.
+
+\medskip
+\noindent\textbf{Verification Criterion:} Track the exponential accumulation of longitudinal electrostatic field energy density over time, \(W_E(t) = \int \frac{1}{2}\epsilon_0 E_x^2 dx\). The measured exponential growth rate (\(\Gamma\)) extracted from the simulation log must tightly match the analytical value derived from linear plasma theory:
+\begin{equation}
+\Gamma = \omega_{pe} \frac{\sqrt{3}}{2} \left(\frac{n_{\text{beam}}}{2 n_{\text{plasma}}}\right)^{1/3}
+\end{equation}
+Furthermore, code execution must guarantee bit-wise identical output arrays regardless of whether it is processed with 1, 2, or \(N\) concurrent OpenMP worker threads.
+
+\subsection{Step 4: Distributed-Memory Parallelization via MPI (Domain Decomposition)}
+\textbf{Goal:} Scale the codebase across separate hardware nodes. Segment the 1D/2D structural spatial grid domain into localized spatial subdomains distributed across distinct MPI ranks. Program halo/ghost-cell data exchange pipelines to synchronize boundary electric/magnetic field arrays, and establish particle migration vectors to securely pack and transfer macro-particles as they travel across MPI boundaries.
+
+\medskip
+\noindent\textbf{Physics Check (Thermal Outflow Across Ranks):} Establish a steady-state temperature gradient across the global system domain (e.g., maintaining a hot boundary reservoir \(T_{\text{hot}}\) at Rank 0 and a cold reservoir \(T_{\text{cold}}\) at the final Rank \(M\)) in the absence of an electron beam. This forces macro-particles to continuously migrate across distinct distributed subdomains.
+
+\medskip
+\noindent\textbf{Verification Criterion:} The cumulative macro-particle count (\(N_{\text{total}} = \sum N_{\text{rank}}\)) and global system energy conservation expressions must be preserved perfectly down to machine precision bounds across every timestep. The macroscopically measured steady-state heat flux vector (\(q_\parallel\)) passing across the domain partitions must match classical Spitzer-Härm thermal conductivity estimations:
+\begin{equation}
+q_{\text{SH}} = -\kappa_{\text{SH}} \nabla T_e
+\end{equation}
+This mathematically proves that the MPI boundary-crossing serializers are preserving kinetic velocity distribution functions without truncation or distortion.
+
+\subsection{Step 5: In-Situ Kinetic Diagnostics and Tracer Engine}
+\textbf{Goal:} Avoid the catastrophic I/O bottlenecks associated with dumping raw particle files from an MPI cluster. Integrate real-time diagnostics directly into the processing pipeline to calculate velocity distribution moments on the fly. Create a dedicated tracking subsystem that tags a sparse fraction of macro-particles globally as passive tracers to record raw individual phase-space histories.
+
+\medskip
+\noindent\textbf{Physics Check (Maxwellian Anisotropy Relaxation):} Populate an unmagnetized plasma mesh with an artificially induced highly anisotropic kinetic velocity distribution (\(T_x \gg T_y\)), and isolate their behaviors using the active tracer tracking system.
+
+\medskip
+\noindent\textbf{Verification Criterion:} The targeted tracer particles must demonstrate clear random-walk diffusion characteristics in velocity space. Simultaneously, the in-situ moment calculator must show the macroscopic distribution relaxing smoothly toward an isotropic thermal Maxwellian configuration over a predictable collisional relaxation timescale. This confirms the tracking diagnostics are correctly recording the micro-physics.
+

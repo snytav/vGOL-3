@@ -1,0 +1,253 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{listings}
+\geometry{margin=1in}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\title{vGOL-3 PIC Development Plan:\\Implementation and Validation Report}
+\author{Generated from repository inspection and executed verification runs}
+\date{\today}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report documents the implementation status of the six-step development plan described in \texttt{vGOL-3/pic\_dev\_plan.tex} and the validation evidence available in the \texttt{vGOL-3} workspace. It covers the planned Steps~1--5 and also records the additional, non-planned Step~6 material present in the repository. For each step, the report identifies relevant source files, the planned physics/engineering goal, the implemented behavior, validation tests executed or available, observed results, and remaining gaps.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Scope and Evidence}
+
+\subsection{Plan Source}
+The primary plan is \texttt{vGOL-3/pic\_dev\_plan.tex}. The user request referred to \texttt{dev\_pic\_plant.tex}; that file was not found, and \texttt{pic\_dev\_plan.tex} was treated as the intended plan.
+
+\subsection{Repository Areas Inspected}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Step 1:} \texttt{step1/main.cpp}, \texttt{step1/main2.cpp}, \texttt{step1/main3.cpp}, \texttt{step1/single\_main.cpp}, \texttt{step1/phys\_corr\_main.cpp}, \texttt{step1/step1\_boris\_vay\_verify.cpp}, \texttt{step1/visualize.py}.
+  \item \textbf{Step 2:} \texttt{step2/step2\_plasma\_oscillation.cpp}, \texttt{step2/step2\_diagnostics.csv}, \texttt{step2/step2\_verification.txt}.
+  \item \textbf{Step 3:} \texttt{step3/main.cpp}, \texttt{step3/plot\_growth.py}, \texttt{step3/detect\_plateau.py}, \texttt{step3/verify\_step3.py}, diagnostics/plots/PDF artifacts.
+  \item \textbf{Step 4:} \texttt{step4/main.cpp}, \texttt{step4/step4\_mpi\_thermal.py}.
+  \item \textbf{Step 5:} \texttt{step5/main.cpp}, tracer CSV outputs \texttt{tracer\_rank\_*.csv}.
+  \item \textbf{Step 6 (not in plan):} \texttt{step6/main.cpp}, \texttt{step6/gradient\_main.cpp}, plotting/verification scripts and output artifacts.
+\end{itemize}
+
+\subsection{Validation Actions Performed in This Session}
+\begin{itemize}[leftmargin=*]
+  \item Built and ran the Step~1 dedicated verifier \texttt{step1/step1\_boris\_vay\_verify.cpp}.
+  \item Created, built, and ran the Step~2 dedicated verifier \texttt{step2/step2\_plasma\_oscillation.cpp}.
+  \item Modified Step~3 for deterministic bitwise comparison and executed \texttt{step3/verify\_step3.py} (1/2/4 OpenMP threads and growth-rate fit check).
+  \item Added line-by-line comments to all \texttt{.cpp} and \texttt{.py} files in \texttt{vGOL-3}.
+  \item Performed compile/syntax validation: \texttt{python3 -m py\_compile} for Python files; \texttt{g++ -c} for non-MPI C++ files; \texttt{mpicxx -c} for MPI C++ files.
+\end{itemize}
+
+\section{Executive Summary}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.10\textwidth}>{\raggedright\arraybackslash}p{0.18\textwidth}>{\raggedright\arraybackslash}p{0.32\textwidth}>{\raggedright\arraybackslash}p{0.30\textwidth}}
+\toprule
+\textbf{Step} & \textbf{Status} & \textbf{Main Evidence} & \textbf{Key Remaining Gap} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Step} & \textbf{Status} & \textbf{Main Evidence} & \textbf{Key Remaining Gap} \\
+\midrule
+\endhead
+1 & Complete (dedicated check) & \texttt{step1/step1\_boris\_vay\_verify.cpp} passes: $R_L$, $\omega_c$, $\gamma$ invariance. & Older Step~1 prototypes do not all match the exact plan setup. \\
+2 & Complete (dedicated check) & \texttt{step2/step2\_plasma\_oscillation.cpp} passes: $\omega_{pe}$ FFT peak and low heating over $1000\,\omega_{pe}^{-1}$. & Tolerance for FFT-bin resolution/heating is a practical pass threshold; not identical to plan wording. \\
+3 & Partial & OpenMP loops present; \texttt{verify\_step3.py} gives bitwise-identical output for 1/2/4 threads. & Measured two-stream growth rate does not tightly match plan analytical $\Gamma$ in automated check. \\
+4 & Partial & MPI domain decomposition, halo exchange, particle migration, global particle-count check in \texttt{step4/main.cpp}. & Missing plan thermal-outflow/Spitzer-H\"arm verification and explicit global energy conservation check. \\
+5 & Partial & In-situ $q_\parallel$ moment and per-rank tracer logging in \texttt{step5/main.cpp}. & Missing anisotropic Maxwellian relaxation and velocity-space diffusion/relaxation verification. \\
+6 & Extra / not in plan & \texttt{step6/main.cpp}, \texttt{step6/gradient\_main.cpp}, GOL-3 diagnostics scripts/outputs. & Not a plan requirement; should be mapped as extension work. \\
+\bottomrule
+\end{longtable}
+
+\section{Detailed Step Assessment}
+
+\subsection{Step 1: Relativistic Boris-Vay Pusher}
+
+\paragraph{Plan goal.}
+Implement a relativistic Boris-Vay pusher and verify a single electron with $\gamma=2.0$ in uniform $\mathbf{B}=B_0\hat z$, $\mathbf{E}=0$, over $10^4$ steps. Required checks: closed cyclotron orbit, $R_L$ and $\omega_c$ within $<0.1\%$ of analytical values, and invariant $\gamma$.
+
+\paragraph{Implementation.}
+The repository contains several Step~1 prototypes (\texttt{main.cpp}, \texttt{single\_main.cpp}, \texttt{phys\_corr\_main.cpp}). A dedicated verifier was added/used: \texttt{step1/step1\_boris\_vay\_verify.cpp}. It initializes a single electron with $\gamma=2.0$, applies uniform $B_z$, uses Vay push, advances position for $10^4$ steps, and writes \texttt{step1\_trajectory.csv}.
+
+\paragraph{Validation test.}
+\begin{lstlisting}
+g++ -O2 -std=c++17 -Wall -Wextra -pedantic \
+  vGOL-3/step1/step1_boris_vay_verify.cpp -o vGOL-3/step1/step1_boris_vay_verify
+cd vGOL-3/step1 && ./step1_boris_vay_verify
+\end{lstlisting}
+
+\paragraph{Observed result.}
+The verifier reported \texttt{OVERALL: PASS} with:
+\begin{itemize}[leftmargin=*]
+  \item $R_L$ extent error: $0.004732\%$ ($<0.1\%$).
+  \item $\omega_c$ error: $0.001028\%$ ($<0.1\%$).
+  \item $\gamma$ drift: $4.44\times10^{-16}$; $\gamma$ range: $3.00\times10^{-15}$.
+\end{itemize}
+
+\paragraph{Assessment.}
+\textbf{Complete} for the plan's explicit physics check, based on the dedicated verifier.
+
+\subsection{Step 2: High-Order Charge Deposition and Field Solver}
+
+\paragraph{Plan goal.}
+Implement 2nd/3rd-order spatial shape functions and a Poisson field solver. Verify electrostatic plasma oscillations: sinusoidal density perturbation, frozen ions, E-field energy oscillation at $\omega_{pe}$, FFT peak at $\omega_{pe}$, and flat numerical heating over $1000\,\omega_{pe}^{-1}$.
+
+\paragraph{Implementation.}
+A dedicated Step~2 directory/program was created: \texttt{step2/step2\_plasma\_oscillation.cpp}. It uses quadratic/TSC deposition and gather, a spectral FFT Poisson solve for periodic $E_x$, a sinusoidal position perturbation seeding mode~1, frozen ion background, and diagnostic logging to \texttt{step2\_diagnostics.csv} and \texttt{step2\_verification.txt}.
+
+\paragraph{Validation test.}
+\begin{lstlisting}
+g++ -O2 -std=c++17 -Wall -Wextra -pedantic \
+  vGOL-3/step2/step2_plasma_oscillation.cpp -o vGOL-3/step2/step2_plasma_oscillation
+cd vGOL-3/step2 && ./step2_plasma_oscillation
+\end{lstlisting}
+
+\paragraph{Observed result.}
+The run reported \texttt{OVERALL: PASS}:
+\begin{itemize}[leftmargin=*]
+  \item Analytical $\omega_{pe}=5.641460231\times10^9$ rad/s.
+  \item FFT peak (E mode): $5.655006627\times10^9$ rad/s, error $0.240\%$.
+  \item FFT peak ($W_E$): $1.128116118\times10^{10}$ rad/s, near $2\omega_{pe}$.
+  \item Kinetic-energy change: $0.04579\%$ over $1000\,\omega_{pe}^{-1}$.
+  \item Total-energy drift: $0.05006\%$.
+\end{itemize}
+
+\paragraph{Assessment.}
+\textbf{Complete} for the plan's physics/solver intent. The implementation uses a practical FFT-bin/heating tolerance for pass/fail reporting.
+
+\subsection{Step 3: Shared-Memory Parallelization via OpenMP}
+
+\paragraph{Plan goal.}
+Parallelize particle/grid loops with OpenMP, handle deposition race conditions, run two-stream instability, compare measured growth rate $\Gamma$ to analytical theory, and confirm bitwise-identical output for 1/2/$N$ threads.
+
+\paragraph{Implementation.}
+\texttt{step3/main.cpp} includes OpenMP-parallel particle pushes and spectral field calculations. Deposition was changed to a serial deterministic path to make diagnostics bitwise-identical across thread counts. The code logs \texttt{step,time,E\_k1\_amp,instantaneous\_gamma}. Scripts \texttt{plot\_growth.py}, \texttt{detect\_plateau.py}, and \texttt{verify\_step3.py} provide analysis/verification.
+
+\paragraph{Validation tests.}
+\begin{lstlisting}
+cd vGOL-3/step3
+python3 verify_step3.py
+\end{lstlisting}
+The verifier builds \texttt{main.cpp}, runs with \texttt{OMP\_NUM\_THREADS=1,2,4}, compares CSV outputs bitwise, and fits an exponential growth window to estimate $\Gamma$.
+
+\paragraph{Observed result.}
+Latest recorded run:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{BITWISE\_IDENTICAL=PASS}.
+  \item \texttt{gamma\_theory=2.641874e10 rad/s}.
+  \item \texttt{gamma\_sim=1.249958e11 rad/s}, \texttt{r2=0.9882}, window \texttt{5.886-14.014 ps}.
+  \item \texttt{err\_pct=373.133}, \texttt{GAMMA\_MATCH=FAIL}, \texttt{OVERALL=FAIL}.
+\end{itemize}
+
+\paragraph{Assessment.}
+\textbf{Partial}. The OpenMP parallelization and bitwise thread-count reproducibility requirement are addressed. The plan's key physical criterion --- measured growth rate tightly matching analytical $\Gamma$ --- is not yet satisfied by the automated check.
+
+\subsection{Step 4: Distributed-Memory Parallelization via MPI}
+
+\paragraph{Plan goal.}
+Domain decomposition with MPI, halo/ghost-cell exchange, particle migration across ranks, and a thermal-outflow physics check with hot/cold boundaries, global particle/energy conservation, and $q_\parallel$ matching Spitzer-H\"arm.
+
+\paragraph{Implementation.}
+\texttt{step4/main.cpp} implements MPI rank-local domains, ghost-cell exchange, particle push, left/right particle migration buffers, periodic wrap, and a global particle-count reduction at finalization. It reports particle-count conservation. \texttt{step4/step4\_mpi\_thermal.py} is currently only a build/run wrapper and does not implement the thermal/Spitzer verification.
+
+\paragraph{Validation evidence.}
+\begin{itemize}[leftmargin=*]
+  \item Code inspection confirms MPI decomposition, \texttt{MPI\_Sendrecv} halo exchange, particle buffer exchange, and \texttt{MPI\_Reduce} particle-count check.
+  \item No executed thermal-gradient/Spitzer-H\"arm validation artifact was produced in this session.
+  \item MPI C++ compilation check for \texttt{step4/main.cpp} succeeded (\texttt{mpicxx -c}, OpenMPI header warnings only).
+\end{itemize}
+
+\paragraph{Assessment.}
+\textbf{Partial}. The distributed-memory mechanics are partially implemented; the plan's thermal transport physics verification is missing.
+
+\subsection{Step 5: In-Situ Kinetic Diagnostics and Tracer Engine}
+
+\paragraph{Plan goal.}
+In-situ moment calculation, passive tracer tracking, and a Maxwellian anisotropy relaxation physics check ($T_x\gg T_y$), with tracer random-walk diffusion in velocity space and isotropization over collisional relaxation time.
+
+\paragraph{Implementation.}
+\texttt{step5/main.cpp} extends particles with IDs, logs selected tracers to per-rank CSV files, and computes in-situ local parallel heat flux moments on sampled steps. Tracer CSV files exist in \texttt{step5/}. The initialization is isotropic thermal normal distribution; no anisotropy-relaxation diagnostic is implemented.
+
+\paragraph{Validation evidence.}
+\begin{itemize}[leftmargin=*]
+  \item Code inspection confirms tracer logging and in-situ $q_\parallel$ accumulation.
+  \item Existing artifacts: \texttt{step5/tracer\_rank\_0..3.csv}.
+  \item MPI C++ compilation check for \texttt{step5/main.cpp} succeeded.
+  \item No anisotropy-relaxation/isotropization verification output was produced.
+\end{itemize}
+
+\paragraph{Assessment.}
+\textbf{Partial}. Diagnostics infrastructure exists, but the specific plan physics check is not implemented.
+
+\subsection{Step 6: GOL-3 Extension (Not in Plan)}
+
+\paragraph{Scope.}
+The repository contains \texttt{step6/} with \texttt{main.cpp}, \texttt{gradient\_main.cpp}, plotting scripts, and output artifacts such as \texttt{gol3\_anomalous\_conductivity.csv} and PNG plots. These target GOL-3 anomalous conductivity/nonlinear suppression scenarios.
+
+\paragraph{Assessment.}
+\textbf{Extra work, not required by the plan}. It should be treated as an extension beyond Step~5. Some components (temperature gradient, heat-flux diagnostics) are related to missing Step~4/5 checks, but they do not provide the exact plan-prescribed verifications.
+
+\section{Code-Quality and Maintenance Actions}
+
+\subsection{Line-by-Line Commenting}
+All \texttt{.cpp} and \texttt{.py} files under \texttt{vGOL-3} were annotated with line-by-line comments. The annotation was automated and therefore uniform/generic; it improves traceability but should be refined into domain-specific comments for publication-quality code.
+
+\subsection{Compile/Syntax Validation}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Python:} \texttt{python3 -m py\_compile} passed for all Python files. Warnings: \texttt{SyntaxWarning: invalid escape sequence} in \texttt{step3/detect\_plateau.py} and \texttt{step6/plot\_gol3\_results.py}.
+  \item \textbf{C++ non-MPI:} \texttt{g++ -O2 -std=c++17 -fopenmp -Wall -Wextra -pedantic -c} passed for Step~1/2/3 checked files.
+  \item \textbf{C++ MPI:} \texttt{mpicxx -O2 -std=c++17 -fopenmp -Wall -Wextra -pedantic -c} passed for Step~4/5/6 checked files; OpenMPI C++ binding headers emitted \texttt{-Wcast-function-type} warnings unrelated to project logic.
+\end{itemize}
+
+\section{Recommended Next Work}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Complete Step~3 physics criterion:} tune/adjust the two-stream setup and measurement window to make measured $\Gamma$ match the plan's analytical formula within a clearly justified tolerance; keep the bitwise thread-count test.
+  \item \textbf{Implement Step~4 thermal-outflow test:} add hot/cold boundary reservoirs, disable beam, record global energy and rank-crossing $q_\parallel$, and compare to Spitzer-H\"arm/$\kappa_{\mathrm{SH}}\nabla T_e$.
+  \item \textbf{Implement Step~5 anisotropy-relaxation test:} initialize $T_x\gg T_y$, track tracer velocity-space diffusion, and compute in-situ isotropization/relaxation metrics.
+  \item \textbf{Replace generic comments with domain comments:} prioritize \texttt{step1/step1\_boris\_vay\_verify.cpp}, \texttt{step2/step2\_plasma\_oscillation.cpp}, \texttt{step3/main.cpp}, \texttt{step4/main.cpp}, \texttt{step5/main.cpp}.
+  \item \textbf{Add automated test scripts:} a top-level script should run all step verifiers and emit a PASS/FAIL summary.
+\end{enumerate}
+
+\section{Artifact Index}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.38\textwidth}>{\raggedright\arraybackslash}p{0.56\textwidth}}
+\toprule
+\textbf{Artifact} & \textbf{Purpose / Notes} \\
+\midrule
+\endhead
+\texttt{vGOL-3/pic\_dev\_plan.tex} & Original 5-step development plan. \\
+\texttt{vGOL-3/step1/step1\_boris\_vay\_verify.cpp} & Dedicated Step~1 Boris-Vay cyclotron verification; PASS. \\
+\texttt{vGOL-3/step1/step1\_trajectory.csv} & Step~1 trajectory/time history output. \\
+\texttt{vGOL-3/step2/step2\_plasma\_oscillation.cpp} & Dedicated Step~2 plasma oscillation/heating verification; PASS. \\
+\texttt{vGOL-3/step2/step2\_diagnostics.csv} & Step~2 field/energy time history. \\
+\texttt{vGOL-3/step2/step2\_verification.txt} & Step~2 summary metrics. \\
+\texttt{vGOL-3/step3/main.cpp} & Two-stream OpenMP implementation; deterministic deposition for bitwise comparison. \\
+\texttt{vGOL-3/step3/verify\_step3.py} & Step~3 bitwise + growth-rate verification script; bitwise PASS, gamma FAIL. \\
+\texttt{vGOL-3/step4/main.cpp} & MPI domain decomposition/migration prototype; particle-count reduction check. \\
+\texttt{vGOL-3/step5/main.cpp} & MPI tracer logging and in-situ $q_\parallel$ moments. \\
+\texttt{vGOL-3/step6/} & Extra GOL-3 anomalous-conductivity experiments, not in plan. \\
+\bottomrule
+\end{longtable}
+
+\end{document}

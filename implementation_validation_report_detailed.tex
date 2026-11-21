@@ -1,0 +1,340 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{listings}
+\geometry{margin=1in}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\graphicspath{{report_figures/}}
+
+\title{vGOL-3 PIC Development Plan:\\Detailed Implementation, Equations, and Validation Tests}
+\author{Generated from repository inspection and executed verification runs}
+\date{\today}
+
+\lstset{basicstyle=\ttfamily\small,breaklines=true,frame=single,columns=fullflexible}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Scope}
+This report extends the earlier status summary with detailed validation-test descriptions. For each validation test it provides: (a) the physical idea, (b) numerical result, and (c) a plot showing the result. It also documents the governing equations used by the planned/implemented steps.
+
+Primary plan: \texttt{vGOL-3/pic\_dev\_plan.tex}. The requested \texttt{dev\_pic\_plant.tex} was not found.
+
+\section{Mathematical Model and Step Equations}
+
+\subsection{Common PIC/Plasma Equations}
+The PIC cycle evolves macro-particles and self-consistent fields:
+\begin{align}
+\frac{d\mathbf{x}_p}{dt} &= \mathbf{v}_p = \frac{\mathbf{u}_p}{\gamma_p}, \qquad \mathbf{u}_p\equiv \gamma_p\mathbf{v}_p,\\
+\frac{d\mathbf{u}_p}{dt} &= \frac{q_s}{m_s}\left(\mathbf{E}(\mathbf{x}_p,t)+\mathbf{v}_p\times\mathbf{B}(\mathbf{x}_p,t)\right),\\
+\gamma_p &= \sqrt{1+\frac{|\mathbf{u}_p|^2}{c^2}}.
+\end{align}
+Charge deposition from particles to grid uses shape functions $S$:
+\begin{equation}
+\rho_j = \sum_p q_p w_p \frac{S(x_j-x_p)}{\Delta V}.
+\end{equation}
+The 1D electrostatic field solve used by the plan/code is
+\begin{equation}
+\frac{\partial E_x}{\partial x}=\frac{\rho}{\varepsilon_0},\qquad
+E_{x,k} = -i\frac{\rho_k}{\varepsilon_0 k},\quad k\neq0,
+\end{equation}
+in the spectral periodic form. The cold plasma frequency is
+\begin{equation}
+\omega_{pe}=\sqrt{\frac{n_0 q_e^2}{\varepsilon_0 m_e}}.
+\end{equation}
+
+\subsection{Step 1 Equations: Relativistic Boris-Vay Pusher}
+For a particle in uniform magnetic field $\mathbf{B}=B_0\hat z$, $\mathbf{E}=0$, the relativistic cyclotron radius and frequency are
+\begin{equation}
+R_L=\frac{\gamma m_e v_\perp}{|q_e|B_0},\qquad
+\omega_c=\frac{|q_e|B_0}{\gamma m_e}.
+\end{equation}
+The Vay pusher updates $\mathbf{u}=\gamma\mathbf{v}$ through electric half-kicks and a magnetic rotation. With $\mathbf{s}=\mathbf{t}/\gamma^+$, $\mathbf{t}=\frac{q\Delta t}{2m}\mathbf{B}$,
+\begin{align}
+\mathbf{u}^- &= \mathbf{u}^{n-1/2}+\frac{q\Delta t}{2m}\mathbf{E}^n,\\
+\mathbf{u}' &= \mathbf{u}^-+\mathbf{u}^-\times\mathbf{s},\\
+\mathbf{u}^+ &= \mathbf{u}^-+\frac{2}{1+|s|^2}(\mathbf{u}'\times\mathbf{s}),\\
+\mathbf{u}^{n+1/2} &= \mathbf{u}^+ + \frac{q\Delta t}{2m}\mathbf{E}^n.
+\end{align}
+
+\subsection{Step 2 Equations: Plasma Oscillation and Heating}
+The plan's perturbation is
+\begin{equation}
+n_e(x)=n_0\left[1+\delta\sin(kx)\right].
+\end{equation}
+Linear cold-electron electrostatic oscillations satisfy
+\begin{equation}
+\frac{d^2 \delta n}{dt^2}+\omega_{pe}^2\delta n=0,
+\end{equation}
+so the electric field mode oscillates at $\omega_{pe}$ and field energy $W_E\propto E^2$ oscillates at $2\omega_{pe}$. The field energy is
+\begin{equation}
+W_E(t)=\int \frac{1}{2}\varepsilon_0 E_x^2(x,t)\,dx.
+\end{equation}
+
+\subsection{Step 3 Equations: Two-Stream Instability}
+For a cold beam-plasma system, the plan's analytical growth-rate target is
+\begin{equation}
+\Gamma = \omega_{pe}\frac{\sqrt{3}}{2}\left(\frac{n_{\mathrm{beam}}}{2n_{\mathrm{plasma}}}\right)^{1/3}.
+\end{equation}
+The diagnostics estimate instantaneous growth from a dominant field mode amplitude $A(t)=|E_{k1}(t)|$:
+\begin{equation}
+\Gamma(t)=\frac{d}{dt}\ln A(t)\approx \frac{\ln A(t_{i+1})-\ln A(t_i)}{t_{i+1}-t_i}.
+\end{equation}
+
+\subsection{Step 4 Equations: MPI Thermal Transport}
+The plan specifies a steady-state thermal outflow and comparison to Spitzer-H\"arm heat flux:
+\begin{equation}
+q_{\mathrm{SH}} = -\kappa_{\mathrm{SH}}\nabla T_e.
+\end{equation}
+Global conservation checks require
+\begin{equation}
+N_{\mathrm{total}}=\sum_{r=0}^{M-1}N_r=\mathrm{const},\qquad
+\mathcal{E}_{\mathrm{total}}(t)=\mathrm{const}\;\text{(within machine precision/tolerance)}.
+\end{equation}
+
+\subsection{Step 5 Equations: Kinetic Diagnostics and Anisotropy Relaxation}
+The plan's in-situ kinetic moment includes parallel heat flux
+\begin{equation}
+q_\parallel(x,t)=\int \frac{1}{2}m_s v_\parallel |v|^2 f_s(x,\mathbf{v},t)\,d^3v,
+\end{equation}
+with a 1D3V reduced implementation typically using $q_\parallel\sim\int \frac{1}{2}m v_x^3 f dv$. The anisotropy-relaxation test initializes
+\begin{equation}
+T_x \gg T_y
+\end{equation}
+and expects isotropization toward a Maxwellian over a collisional relaxation timescale $\tau_{\mathrm{rel}}$:
+\begin{equation}
+T_x(t),T_y(t),T_z(t)\rightarrow T_{\mathrm{eq}}.
+\end{equation}
+
+\section{Detailed Validation Tests}
+
+\subsection{Step 1 Validation: Single-Particle Relativistic Cyclotron Orbit}
+
+\subsubsection*{a) Physical idea}
+A single relativistic electron in a uniform magnetic field should execute gyromotion with no electric field. This isolates the pusher from collective PIC effects. The radius and cyclotron frequency must follow relativistic dynamics, and in exact physics the energy/Lorentz factor is invariant because $\mathbf{v}\cdot(\mathbf{v}\times\mathbf{B})=0$.
+
+\subsubsection*{b) Numerical result}
+Test program: \texttt{step1/step1\_boris\_vay\_verify.cpp}. Parameters: $\gamma_0=2$, $B_0=1$ T, $\mathbf{E}=0$, $N_{\mathrm{steps}}=10^4$, $dt=T_c/200$.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Quantity & Analytical / Expected & Measured / Result \\
+\midrule
+$R_L$ & 0.00295229623157 m & 0.00295215651671 m (0.004732\%) \\
+$\omega_c$ & $8.79410005386\times10^{10}$ rad/s & $8.79419043364\times10^{10}$ rad/s (0.001028\%) \\
+$\gamma$ drift & 0 & $4.44\times10^{-16}$ relative \\
+$\gamma$ range & 0 & $3.00\times10^{-15}$ relative \\
+Overall & PASS & PASS \\
+\bottomrule
+\end{tabular}
+\caption{Step 1 cyclotron validation results.}
+\end{table}
+
+\subsubsection*{c) Plot}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\textwidth]{step1_validation.png}
+\caption{Step 1 validation: left, cyclotron orbit in the $x$-$y$ plane (centered); right, relative Lorentz-factor variation over time.}
+\end{figure}
+
+\subsection{Step 2 Validation: Electrostatic Plasma Oscillation and Heating}
+
+\subsubsection*{a) Physical idea}
+A small charge-density perturbation in a cold plasma should produce Langmuir oscillations at $\omega_{pe}$. With frozen ions and a periodic domain, the dominant electric-field mode should oscillate at $\omega_{pe}$, while field energy oscillates at $2\omega_{pe}$. A good PIC discretization should avoid strong numerical heating over many plasma periods.
+
+\subsubsection*{b) Numerical result}
+Test program: \texttt{step2/step2\_plasma\_oscillation.cpp}. Setup: $N_x=256$, ppc=200, $n_0=10^{16}$ m$^{-3}$, $T_e=1$ eV, $\delta=0.01$, mode 1, total time $1000\,\omega_{pe}^{-1}$.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Quantity & Expected & Measured / Result \\
+\midrule
+$\omega_{pe}$ & $5.641460231\times10^9$ rad/s & FFT peak $5.655006627\times10^9$ rad/s \\
+$\omega_{pe}$ error & $<5\%$ threshold used & $0.240122\%$ PASS \\
+$W_E$ peak & $\sim2\omega_{pe}$ & $1.128116118\times10^{10}$ rad/s PASS \\
+KE change & flat & $0.045792\%$ PASS \\
+Total energy drift & small & $0.050064\%$ PASS \\
+Overall & PASS & PASS \\
+\bottomrule
+\end{tabular}
+\caption{Step 2 plasma-oscillation validation results.}
+\end{table}
+
+\subsubsection*{c) Plot}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.99\textwidth]{step2_validation.png}
+\caption{Step 2 validation: left, field-energy time history; middle, FFT of $E_{k1}$ with analytic $f_{pe}$; right, relative kinetic/total energy drift.}
+\end{figure}
+
+\subsection{Step 3 Validation A: OpenMP Bitwise Reproducibility}
+
+\subsubsection*{a) Physical idea}
+Parallelization should not change physics. The plan requires bitwise-identical output for 1, 2, and $N$ OpenMP threads. This test checks deterministic reproducibility of diagnostics when thread count changes.
+
+\subsubsection*{b) Numerical result}
+Test script: \texttt{step3/verify\_step3.py}. Runs: \texttt{OMP\_NUM\_THREADS=1,2,4}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Check & Expected & Result \\
+\midrule
+\texttt{t1 == t2} & identical & PASS \\
+\texttt{t1 == t4} & identical & PASS \\
+Overall bitwise check & PASS & PASS \\
+\bottomrule
+\end{tabular}
+\caption{Step 3 OpenMP reproducibility result.}
+\end{table}
+
+\subsubsection*{c) Plot}
+The same diagnostic plot below includes the Step 3 run; reproducibility is a file-equality check over the three CSV outputs \texttt{two\_stream\_diagnostics\_t1/t2/t4.csv}.
+
+\subsection{Step 3 Validation B: Two-Stream Growth Rate}
+
+\subsubsection*{a) Physical idea}
+A cold electron beam propagating through a stationary plasma excites the two-stream instability. In the linear phase, the unstable mode grows exponentially as $E\sim e^{\Gamma t}$; the plan gives an analytical $\Gamma$ to compare against.
+
+\subsubsection*{b) Numerical result}
+Test script: \texttt{step3/verify\_step3.py}. Current automated fit result:
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Quantity & Expected / Theory & Measured / Result \\
+\midrule
+$\Gamma_{\mathrm{theory}}$ & $2.641874\times10^{10}$ 1/s & --- \\
+$\Gamma_{\mathrm{sim}}$ & close to theory & $1.249958\times10^{11}$ 1/s \\
+Fit window & linear phase & 5.886--14.014 ps \\
+$R^2$ & high & 0.9882 \\
+Relative error & tight match & 373.133\% \\
+Status & PASS & FAIL \\
+\bottomrule
+\end{tabular}
+\caption{Step 3 two-stream growth-rate result.}
+\end{table}
+
+\subsubsection*{c) Plot}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.99\textwidth]{step3_validation.png}
+\caption{Step 3 validation: left, $\log_{10}|E_{k1}|$ growth; right, instantaneous growth rate compared with the plan's analytical $\Gamma$. The growth signal is present, but the measured rate does not yet match the plan value.}
+\end{figure}
+
+\subsection{Step 4 Validation A: MPI Particle-Count Conservation (Implemented)}
+
+\subsubsection*{a) Physical idea}
+When particles cross MPI subdomain boundaries, serialization/deserialization and periodic wrap must not create or lose particles. Conservation of global particle count is a necessary correctness condition for distributed PIC.
+
+\subsubsection*{b) Numerical result}
+Program: \texttt{step4/main.cpp}. The code performs \texttt{MPI\_Reduce} on local particle counts and prints a global comparison.
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Quantity & Expected & Result in code logic \\
+\midrule
+Global particle count & 51200 & 51200 (printed as verification target) \\
+Status message & verified & \texttt{MPI NETWORK FRAMEWORK VERIFIED SUCCESSFULLY} \\
+\bottomrule
+\end{tabular}
+\caption{Step 4 implemented conservation check. This is a code-level check; a fresh multi-rank execution log was not captured in this report session.}
+\end{table}
+
+\subsubsection*{c) Plot}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.72\textwidth]{step4_validation.png}
+\caption{Step 4 implemented particle-count conservation target/observed value as encoded by the existing verification output logic.}
+\end{figure}
+
+\subsection{Step 4 Validation B: Thermal Outflow / Spitzer-H\"arm (Plan-Required, Missing)}
+
+\subsubsection*{a) Physical idea}
+A hot-to-cold boundary should drive parallel heat flow. With MPI domains, particles and fields crossing ranks must preserve the physical transport, allowing comparison with classical Spitzer-H\"arm conduction.
+
+\subsubsection*{b) Numerical result}
+Not implemented as a dedicated passing test. \texttt{step4/step4\_mpi\_thermal.py} is currently only a build/run wrapper; \texttt{step4/main.cpp} uses periodic thermal initialization and does not compute $\kappa_{\mathrm{SH}}\nabla T_e$ comparison.
+
+\subsubsection*{c) Plot}
+No plan-compliant plot artifact available. Required future plot: $q_\parallel(x)$ or time-averaged heat flux versus Spitzer-H\"arm prediction across MPI ranks.
+
+\subsection{Step 5 Validation A: Tracer Logging / In-Situ Diagnostic Presence (Implemented)}
+
+\subsubsection*{a) Physical idea}
+Large PIC runs cannot dump all particles frequently. Passive tracer particles sampled at intervals provide microscopic phase-space histories, while in-situ moments provide macroscopic diagnostics.
+
+\subsubsection*{b) Numerical result}
+Program: \texttt{step5/main.cpp}. Existing tracer artifacts: \texttt{step5/tracer\_rank\_0..3.csv}.
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Rank file & Rows (excluding header) & Diagnostic content \\
+\midrule
+\texttt{tracer\_rank\_0.csv} & 333 & \texttt{step,time,id,x,ux,uy} \\
+\texttt{tracer\_rank\_1.csv} & 256 & sampled tracer rows \\
+\texttt{tracer\_rank\_2.csv} & 326 & sampled tracer rows \\
+\texttt{tracer\_rank\_3.csv} & 122 & sampled tracer rows \\
+\bottomrule
+\end{tabular}
+\caption{Step 5 tracer log artifacts present in the workspace.}
+\end{table}
+
+\subsubsection*{c) Plot}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.99\textwidth]{step5_validation.png}
+\caption{Step 5 diagnostics: left, sampled tracer points in $(x,u_x)$ from rank logs; right, number of logged tracer rows per rank. This confirms logging/infrastructure, not the full plan anisotropy-relaxation physics test.}
+\end{figure}
+
+\subsection{Step 5 Validation B: Maxwellian Anisotropy Relaxation (Plan-Required, Missing)}
+
+\subsubsection*{a) Physical idea}
+An initially anisotropic velocity distribution ($T_x\gg T_y$) should relax toward isotropy. Tracers should show velocity-space diffusion and in-situ moments should show temperature isotropization over a collisional relaxation timescale.
+
+\subsubsection*{b) Numerical result}
+Not implemented. \texttt{step5/main.cpp} initializes an isotropic normal distribution and computes $q_\parallel$, but does not compute $T_x,T_y,T_z$ anisotropy relaxation or velocity-space diffusion metrics.
+
+\subsubsection*{c) Plot}
+No plan-compliant plot artifact available. Required future plot: $T_x(t),T_y(t),T_z(t)$ and tracer velocity-space trajectories/statistics.
+
+\section{Compilation and Syntax Validation}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{0.28\textwidth}p{0.32\textwidth}p{0.30\textwidth}}
+\toprule
+Check & Command/Scope & Result \\
+\midrule
+Python syntax & \texttt{python3 -m py\_compile} on all \texttt{vGOL-3/*.py} & PASS, with SyntaxWarnings in \texttt{detect\_plateau.py}, \texttt{plot\_gol3\_results.py} \\
+C++ non-MPI compile & \texttt{g++ -O2 -std=c++17 -fopenmp -c} for Step 1--3 selected files & PASS \\
+C++ MPI compile & \texttt{mpicxx -O2 -std=c++17 -fopenmp -c} for Step 4--6 selected files & PASS, OpenMPI header \texttt{-Wcast-function-type} warnings only \\
+\bottomrule
+\end{tabular}
+\caption{Build/syntax validation performed in this session.}
+\end{table}
+
+\section{Conclusions}
+Steps 1 and 2 have dedicated verification programs with passing numerical results and plots. Step 3 has passing OpenMP bitwise reproducibility but fails the analytical two-stream growth-rate match in the current automated check. Steps 4 and 5 contain substantial infrastructure but do not yet implement the plan's required thermal-outflow/Spitzer and anisotropy-relaxation physics validations. Step 6 is additional GOL-3 extension work outside the original five-step plan.
+
+\end{document}
