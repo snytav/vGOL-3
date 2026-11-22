@@ -1,0 +1,170 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\geometry{margin=1in}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\title{Code Requirements for Simulating the Microscopic Scattering Mechanism\\in Anomalous Heat Conductivity in GOL-3}
+\author{Technical Note}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note lists the physical, numerical, setup, diagnostic, and validation features required for a particle-in-cell (PIC) code to simulate the microscopic scattering mechanism responsible for anomalous electron heat-conductivity suppression in GOL-3-like beam-plasma systems. The central requirement is to resolve kinetic electron motion in self-consistent turbulent electrostatic fields and to measure the resulting effective scattering and parallel heat flux.
+\end{abstract}
+
+\section{Minimum Physics Capabilities}
+
+\subsection{Kinetic Electron Description}
+The code must represent electrons kinetically, through a PIC or equivalent kinetic formulation, so that the full non-Maxwellian distribution function
+\begin{equation}
+    f_e(\mathbf{x},\mathbf{v},t)
+\end{equation}
+is evolved. Fluid closures are insufficient because the microscopic mechanism acts on individual electron trajectories and velocity-space diffusion.
+
+\subsection{Relativistic Beam and Bulk Plasma Populations}
+The simulation must support at least two electron populations: a bulk plasma and a relativistic electron beam (REB). The initialization or injection should control
+\begin{equation}
+    n_b,\; n_p,\; v_b,\; \gamma_b,\; T_e,
+\end{equation}
+where $n_b$ and $n_p$ are beam and plasma densities, $v_b$ is beam velocity, $\gamma_b$ is beam Lorentz factor, and $T_e$ is bulk electron temperature. This is needed to drive the beam-plasma instability.
+
+\subsection{Self-Consistent Electrostatic Field Solve}
+The code must compute self-consistent parallel electric fields. In the minimum 1D electrostatic case,
+\begin{equation}
+    \frac{\partial E_x}{\partial x} = \frac{\rho}{\varepsilon_0}, \qquad
+    \rho = \sum_s q_s \int f_s\,d^3v .
+\end{equation}
+The field is required because hot electrons scatter according to
+\begin{equation}
+    m_e \frac{d v_\parallel}{dt} = -e E_\parallel(x,t).
+\end{equation}
+
+\subsection{Relativistic Particle Pusher}
+Beam electrons can be relativistic, so the pusher must advance
+\begin{equation}
+    \frac{d\mathbf{x}}{dt}=\frac{\mathbf{u}}{\gamma}, \qquad
+    \frac{d\mathbf{u}}{dt}=\frac{q}{m}\left(\mathbf{E}+\frac{\mathbf{u}}{\gamma}\times\mathbf{B}\right), \qquad
+    \gamma=\sqrt{1+\frac{|\mathbf{u}|^2}{c^2}}.
+\end{equation}
+A relativistic Boris or Boris--Vay/Higuera--Cary-type pusher is appropriate.
+
+\subsection{Ion Model}
+The ion treatment must match the physical timescale. Frozen ions may be adequate for initial electron-beam/Langmuir instability growth. Mobile ions are required if the simulation aims to capture modulational instability, Langmuir wave-packet collapse, caviton formation, or longer strong-turbulence evolution.
+
+\section{Numerical and Resolution Requirements}
+
+\subsection{Spatial Resolution}
+The grid must resolve the electron Debye length:
+\begin{equation}
+    \Delta x \lesssim \lambda_D, \qquad
+    \lambda_D=\sqrt{\frac{\varepsilon_0 k_B T_e}{n_e e^2}}.
+\end{equation}
+This is necessary to resolve Langmuir waves and localized turbulent field structures.
+
+\subsection{Temporal Resolution}
+The time step must resolve plasma oscillations and satisfy particle stability constraints:
+\begin{equation}
+    \omega_{pe}\Delta t \ll 1, \qquad
+    v_{\max}\Delta t < \Delta x,
+\end{equation}
+with
+\begin{equation}
+    \omega_{pe}=\sqrt{\frac{n_e e^2}{\varepsilon_0 m_e}}.
+\end{equation}
+
+\subsection{Noise and Energy-Conservation Control}
+The code should minimize numerical heating and stochastic noise so that artificial diffusion is not mistaken for physical scattering. Useful features include sufficient particles per cell, higher-order shape functions, consistent deposition/gathering, and good global energy-conservation behavior.
+
+\subsection{Domain Size and Simulation Duration}
+The spatial domain must be long enough to measure axial transport and effective mean free path. The run time must cover instability growth, saturation, turbulent scattering, and the evolution of heat flux.
+
+\section{Setup and Boundary-Condition Features}
+
+\subsection{Beam Injection or Unstable Initial Condition}
+The code should support either an injected REB pulse or a controlled unstable initial distribution, such as a bump-on-tail or two-stream configuration. Beam duration, current/density, energy, and injection profile should be configurable.
+
+\subsection{Heat-Transport Boundary Conditions}
+To measure anomalous conductivity, the code needs boundary conditions that permit a meaningful axial heat-flux measurement: hot/cold reservoirs, open boundaries, inflow/outflow, or absorbing/reinjecting boundaries. Periodic boundaries are useful for instability benchmarks but can hide net axial heat loss.
+
+\subsection{Magnetic-Field Configuration}
+At minimum, the code should support a uniform guiding field $B_z$ for parallel scattering studies. For GOL-3-specific physics, it should also support spatially varying multiple-mirror fields
+\begin{equation}
+    B(x)=B_0\left[1+\epsilon \cos(k_m x)\right], \quad \text{or an equivalent mirror profile.}
+\end{equation}
+
+\subsection{Dimensionality}
+A 1D3V electrostatic PIC model can capture the basic parallel Langmuir scattering mechanism. Two- or three-dimensional models may be required for full strong-turbulence geometry, transverse mode coupling, cavitation, and more realistic beam-plasma dynamics.
+
+\section{Diagnostics Required to Observe the Mechanism}
+
+\subsection{Field Diagnostics}
+The code should record $E_\parallel(x,t)$, electrostatic field energy
+\begin{equation}
+    W_E(t)=\int \frac{1}{2}\varepsilon_0 E_x^2(x,t)\,dx,
+\end{equation}
+and spectral content $E(k,\omega)$, especially near $\omega_{pe}$.
+
+\subsection{Phase-Space Diagnostics}
+Phase-space plots $f_e(x,v_x)$ and velocity distributions $f_e(v_x,v_\perp)$ are needed to observe beam slowing, plateau formation, trapping, and scattering.
+
+\subsection{Tracer Particles}
+Tagged hot electrons should be tracked to measure stochastic velocity kicks, reflections, decorrelation, and velocity-space diffusion.
+
+\subsection{Effective Scattering Rate}
+An effective turbulent scattering rate should be estimated from tracer statistics, for example
+\begin{equation}
+    \nu_{\mathrm{eff}} \sim \frac{\langle \Delta v_\parallel^2\rangle}{2\Delta t},
+\end{equation}
+or from velocity autocorrelation decay.
+
+\subsection{Heat-Flux and Conductivity Diagnostics}
+The code should compute the parallel kinetic heat flux moment,
+\begin{equation}
+    q_\parallel(x,t)=\int \frac{1}{2}m_e v_\parallel |\mathbf{v}|^2 f_e\,d^3v,
+\end{equation}
+and infer an effective conductivity from
+\begin{equation}
+    q_\parallel = -\kappa_{\parallel,\mathrm{eff}}\nabla_\parallel T_e.
+\end{equation}
+This should be compared with classical Spitzer--H\"arm conductivity $\kappa_{\parallel,\mathrm{Sp}}$.
+
+\section{Validation and Control Cases}
+
+\subsection{Conservation and Convergence}
+Before interpreting heat-flux suppression as physical, the code should pass particle-number, momentum/energy-balance, and convergence tests in $\Delta x$, $\Delta t$, particles per cell, and domain size.
+
+\subsection{Baseline Comparisons}
+Run control cases without beam-driven turbulence and with known transport behavior. The turbulent REB case should show increased $\nu_{\mathrm{eff}}$, enhanced field fluctuations near $\omega_{pe}$, and reduced $q_\parallel$ relative to the classical baseline.
+
+\section{Summary Checklist}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.32\textwidth}p{0.60\textwidth}}
+\toprule
+\textbf{Category} & \textbf{Required capability} \\
+\midrule
+Kinetics & PIC electrons with non-Maxwellian $f_e(\mathbf{x},\mathbf{v},t)$ \\
+Beam/plasma drive & REB + bulk plasma initialization/injection \\
+Fields & Self-consistent $E_\parallel$ from Poisson/Maxwell solver \\
+Pusher & Relativistic particle advance \\
+Resolution & $\Delta x\lesssim\lambda_D$, $\omega_{pe}\Delta t\ll1$, low numerical heating \\
+Transport setup & Heat-flux-capable boundaries and sufficient domain/time \\
+Diagnostics & $E(k,\omega)$, phase space, tracers, $\nu_{\mathrm{eff}}$, $q_\parallel$, $\kappa_{\mathrm{eff}}$ \\
+Validation & Conservation, convergence, and classical/turbulent baselines \\
+\bottomrule
+\end{tabular}
+\caption{Minimum code-feature checklist for microscopic scattering simulations.}
+\end{table}
+
+\end{document}
