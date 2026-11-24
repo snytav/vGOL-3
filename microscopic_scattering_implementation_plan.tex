@@ -1,0 +1,371 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\geometry{margin=1in}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\title{Step-by-Step Implementation Plan for Simulating the\\
+Microscopic Scattering Mechanism in GOL-3}
+\author{Technical Plan}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document converts the existing \texttt{vGOL-3} prototype codes and the two design notes
+(\texttt{gol3\_code\_requirements\_microscopic\_scattering.tex} and
+\texttt{gol3\_microscopic\_scattering\_anomalous\_heat\_conductivity.tex}) into a concrete,
+sequenced implementation plan. The target is a code that resolves the full microscopic chain
+relativistic electron beam (REB) $\rightarrow$ beam--plasma/Langmuir instability $\rightarrow$
+strong electrostatic turbulence $\rightarrow$ resonant and non-resonant scattering of parallel
+electron motion $\rightarrow$ effective collision rate $\nu_{\mathrm{eff}} \gg \nu_{ei}$
+$\rightarrow$ reduced parallel heat conductivity $\kappa_{\mathrm{eff}} \ll \kappa_{\mathrm{Sp}}$.
+Each phase reuses a specific asset already present in the repository and ends with a quantitative
+acceptance test, so that incorrect physics is detected at its source rather than after production
+runs.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Current State of the Codebase}
+
+The repository contains six development stages plus analysis scripts and validation reports. The
+relevant assets, their verified capabilities, and the gaps that block microscopic-scattering
+simulations are summarized in Table~\ref{tab:state}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.24\textwidth}p{0.32\textwidth}p{0.36\textwidth}}
+\toprule
+\textbf{Asset} & \textbf{Verified capability} & \textbf{Gap for scattering physics} \\
+\midrule
+\texttt{step1/step1\_boris\_vay\_verify.cpp} & Relativistic Vay pusher; $R_L$, $\omega_c$ and $\gamma$ invariance all $<0.1\%$ error & Not used by the production codes; they use the simple kick $u_x \leftarrow u_x - (qE/m)\Delta t$ \\
+\midrule
+\texttt{step2/step2\_plasma\_oscillation.cpp} & Quadratic/TSC deposition, spectral Poisson solve; $\omega_{pe}$ error $0.24\%$, heating $0.05\%$ over $1000\,\omega_{pe}^{-1}$ & Also not used downstream; Steps~3--6 use first-order deposition and local finite-difference integration \\
+\midrule
+\texttt{step3/main.cpp} & Two-stream instability, OpenMP loops, bitwise-identical results for 1/2/4 threads & Measured growth rate is $373\%$ above the plan value; the linear beam--plasma drive is not validated \\
+\midrule
+\texttt{step4/main.cpp} & MPI decomposition, halo exchange, particle migration, global particle-count check & No thermal outflow, no global energy check, periodic boundaries only \\
+\midrule
+\texttt{step5/main.cpp} & Tracer IDs and in-situ $q_\parallel$ moment & No $\nu_{\mathrm{eff}}$, no anisotropy or velocity-diffusion verification \\
+\midrule
+\texttt{step6/main.cpp}, \texttt{gradient\_main.cpp} & GOL-3 runs, hot/cold reservoir attempt, MPI gather/scatter FFT Poisson & Run length 15\,ps versus beam transit $\sim$57\,ps; $q_\parallel$ reduction uses $\lvert q\rvert$; suppression inferred from a peak/$3.5^{2.5}$ heuristic, not from $\kappa_{\mathrm{eff}}=-q_\parallel/\nabla T_e$ \\
+\bottomrule
+\end{tabular}
+\caption{Implemented capabilities and remaining gaps relevant to microscopic scattering.}
+\label{tab:state}
+\end{table}
+
+The central engineering problem is therefore not a lack of components: the verified pusher,
+high-order deposition, field solver, MPI transport, tracers and GOL-3 setup all exist. The problem
+is that they live in disconnected single-file prototypes and that several production shortcuts
+(the simple kick, first-order shapes, too-short runs, sign-destroying flux reductions) prevent the
+microscopic mechanism from being observed and measured correctly.
+
+\section{Physics Target and Governing Relations}
+
+The chain to be demonstrated and quantified is
+\begin{equation}
+\text{REB} \rightarrow \text{Langmuir growth} \rightarrow \text{strong turbulence}
+\rightarrow \text{scattering of } v_\parallel \rightarrow \nu_{\mathrm{eff}} \gg \nu_{ei}
+\rightarrow \kappa_{\mathrm{eff}} \ll \kappa_{\mathrm{Sp}} .
+\end{equation}
+
+Relevant relations, taken from the design notes, are
+\begin{equation}
+\lambda_D = \sqrt{\frac{\varepsilon_0 k_B T_e}{n_e e^2}}, \qquad
+\omega_{pe} = \sqrt{\frac{n_e e^2}{\varepsilon_0 m_e}}, \qquad
+\Delta x \lesssim \lambda_D,\quad \omega_{pe}\Delta t \ll 1,\quad v_{\max}\Delta t < \Delta x ,
+\end{equation}
+\begin{equation}
+m_e\frac{dv_\parallel}{dt} = -e E_\parallel(x,t), \qquad
+W_E(t) = \int \frac{1}{2}\varepsilon_0 E_x^2\,dx ,
+\end{equation}
+\begin{equation}
+D_v = \frac{\langle \Delta v_\parallel^2\rangle}{2\Delta t},\qquad
+\nu_{\mathrm{eff}} \sim \frac{D_v}{v_{\mathrm{th}\parallel}^2}
+\quad\text{or}\quad
+C(\Delta t)=\frac{\langle v_\parallel(t)v_\parallel(t+\Delta t)\rangle}
+{\langle v_\parallel^2\rangle} \sim e^{-\nu_{\mathrm{eff}}\Delta t},
+\end{equation}
+\begin{equation}
+q_\parallel(x,t)=\int \frac{1}{2}m_e v_\parallel |\mathbf{v}|^2 f_e\,d^3v,\qquad
+\kappa_{\mathrm{eff}} = -\frac{q_\parallel}{\nabla_\parallel T_e}, \qquad
+\kappa_{\mathrm{Sp}} \sim \frac{n_e k_B T_e}{m_e \nu_{ei}} .
+\end{equation}
+
+Two scattering limits must be distinguishable in the diagnostics: resonant/quasilinear scattering
+for $v_\parallel \approx \omega/k$, and non-resonant strong-turbulence scattering for
+$\frac{1}{2}m_e v_\parallel^2 \lesssim e\phi$ with $\phi$ the local electrostatic potential.
+
+\section{Phase-by-Phase Plan}
+
+\subsection{Phase 0: Freeze the Baseline and Build a Shared Core}
+
+\textbf{Goal.} Replace six disconnected single-file programs by one maintainable PIC core without
+losing any existing validated result.
+
+\begin{itemize}[leftmargin=*]
+  \item Preserve \texttt{step1}--\texttt{step6} as immutable reference tests.
+  \item Create \texttt{src/} with modules: \texttt{constants.h}, \texttt{particle.h} (extend the
+        Step~5 struct with \texttt{species}, \texttt{id}, tracer flag), \texttt{pusher.h}
+        (from \texttt{vay\_push()} in Step~1), \texttt{deposit.h} (TSC shapes from Step~2),
+        \texttt{field\_solver.h} (spectral Poisson from Step~2 plus MPI gather/scatter/FFT from
+        \texttt{step6/gradient\_main.cpp}), \texttt{diagnostics.h}, \texttt{io.h}.
+  \item Add \texttt{Makefile}/\texttt{CMakeLists.txt}
+        (\texttt{g++ -O2 -std=c++17 -fopenmp}, \texttt{mpicxx} for MPI) and one configuration
+        interface for $n_e$, $T_e$, $T_i$, $n_b/n_p$, $v_b$, $\gamma_b$, $B(x)$, boundary type,
+        $N_x$, ppc, $\Delta x$, $\Delta t$, $N_{\mathrm{steps}}$ and output cadence.
+  \item Replace the uniform auto-generated comments by domain-specific comments; add a top-level
+        \texttt{make test} that runs all step verifiers.
+\end{itemize}
+
+\textbf{Acceptance gate.} One command reproduces the Step~1 orbit check and the Step~2
+$\omega_{pe}$/heating check, both PASS.
+
+\subsection{Phase 1: Fix the Beam--Plasma Instability (the Drive)}
+
+\textbf{Goal.} Make the linear stage quantitatively correct, since all turbulence and scattering
+results depend on it. The current $373\%$ growth-rate error must be resolved first.
+
+\begin{itemize}[leftmargin=*]
+  \item Port \texttt{step3/main.cpp} to the shared core with Step~2 deposition and spectral solver.
+  \item Audit the resonance condition $k v_b \approx \omega_{pe}$, beam temperature, density
+        ratio, the fitting window, and the $E_{k1}$ DFT extraction (integer-mode binning and
+        sign conventions).
+  \item Compare the measured growth against a numerical root of the full dielectric function,
+        not only the cold-beam formula
+        $\Gamma=\omega_{pe}(\sqrt{3}/2)(n_b/2n_p)^{1/3}$.
+  \item Retain the deterministic deposition path so 1/2/4-thread bitwise equality is preserved.
+\end{itemize}
+
+\textbf{Acceptance gate.} Fitted $\Gamma$ within about $20\%$ of the dispersion-solver prediction,
+fit $R^2>0.9$, and bitwise thread comparison PASS.
+
+\subsection{Phase 2: Unify the Production Pusher and Field Solver}
+
+\textbf{Goal.} Eliminate the mismatch between verified tools and production runs.
+
+\begin{itemize}[leftmargin=*]
+  \item Replace the Euler-style kick in Steps~3--6 by the verified Vay pusher. This matters even
+        at $v_b=0.6c$ ($\gamma_b\approx1.25$) and is essential at higher beam Lorentz factors.
+  \item Replace CIC by TSC deposition/gather everywhere; widen MPI halos from one scalar ghost
+        node to the width required by quadratic shape functions.
+  \item Keep frozen ions initially, but log total (kinetic + field) energy for a conservation check.
+\end{itemize}
+
+\textbf{Acceptance gate.} The production core reproduces Step~2 ($\omega_{pe}$ within $\sim1\%$,
+heating $<0.1\%$ over $1000\,\omega_{pe}^{-1}$) and the Step~1 orbit invariants.
+
+\subsection{Phase 3: Establish a Resolved GOL-3 Parameter Set}
+
+\textbf{Goal.} Make the run long and well resolved enough that scattering can actually occur.
+
+\begin{itemize}[leftmargin=*]
+  \item Print and assert at startup: $\lambda_D$, $\Delta x/\lambda_D$, $\omega_{pe}\Delta t$,
+        $v_{\max}\Delta t/\Delta x$, total time in units of $\omega_{pe}^{-1}$, and beam transit
+        time $L/v_b$.
+  \item For the current Step~6 parameters ($n_e=10^{19}\,\mathrm{m}^{-3}$,
+        $\Delta x=2\times10^{-5}\,\mathrm{m}$, $\Delta t=10^{-14}\,\mathrm{s}$),
+        $\omega_{pe}\approx1.78\times10^{11}\,\mathrm{rad/s}$, so $\omega_{pe}\Delta t\approx
+        1.8\times10^{-3}$ (good), but the 15\,ps run covers only about 2.7 plasma periods while a
+        $0.6c$ beam crosses the $1.024\,\mathrm{cm}$ domain in about 57\,ps ($\sim$10 periods).
+        Extend to the ns scale (hundreds--thousands of $\omega_{pe}^{-1}$, many beam transits),
+        or shorten $L$ for controlled benchmarks.
+  \item Use a quiet start and sufficient ppc ($\ge 100$--$200$) so PIC noise is not mistaken for
+        physical scattering.
+\end{itemize}
+
+\textbf{Acceptance gate.} $\Delta x\lesssim\lambda_D$, $\omega_{pe}\Delta t\ll1$, CFL $<1$; the
+no-beam control shows flat temperature and field energy over the full run.
+
+\subsection{Phase 4: Turbulence Diagnostics (Verify the Middle Link)}
+
+\textbf{Goal.} Demonstrate that Langmuir turbulence develops, saturates and becomes broadband.
+
+\begin{itemize}[leftmargin=*]
+  \item Add $E_\parallel(x,t)$, $W_E(t)$, $E(k,\omega)$ spectrogram with an $\omega_{pe}$ marker,
+        and a localization measure (fraction of $W_E$ in high-field cells, i.e.\ caviton-like
+        structures).
+  \item Add phase-space dumps $f_e(x,v_\parallel)$ and $f_e(v_\parallel,v_\perp)$ for bulk and
+        beam; check plateau formation and trapping. Reuse \texttt{step3/detect\_plateau.py},
+        \texttt{step3/plot\_growth.py} and \texttt{step6/plot\_phase\_space.py}.
+  \item Control cases: beam off $\rightarrow$ no growth; beam on $\rightarrow$ exponential growth,
+        saturation, spectral peak near $\omega_{pe}$, beam plateau.
+\end{itemize}
+
+\textbf{Acceptance gate.} Growth--saturation sequence and $E(k,\omega)$ peak near $\omega_{pe}$
+present only when the beam is present.
+
+\subsection{Phase 5: Tracer Engine and Effective Scattering Rate}
+
+\textbf{Goal.} This is the central microscopic measurement.
+
+\begin{itemize}[leftmargin=*]
+  \item Extend the Step~5 tracer system: tag hot bulk electrons and a beam subset with global IDs;
+        record $x$, $u_\parallel$, $u_\perp$, $E_\parallel(x_p)$ and $\phi(x_p)$ at a cadence
+        resolving $\omega_{pe}^{-1}$.
+  \item Accumulate in situ, per tracer cohort: $\langle\Delta v_\parallel^2\rangle(\Delta t)$
+        over several lag windows giving $D_v$ and $\nu_{\mathrm{eff}}=D_v/v_{\mathrm{th}\parallel}^2$
+        (or the normalized form $\nu_{\mathrm{eff}}\sim\langle\Delta v_\parallel^2\rangle/(2\Delta t)$),
+        the velocity autocorrelation $C(\Delta t)$ with an exponential decay fit, and event counts
+        for resonant ($v_\parallel\approx\omega/k$) and strong-turbulence
+        ($\frac12 m_e v_\parallel^2\lesssim e\phi$) kicks.
+  \item Subtract the no-beam PIC-noise baseline so that numerical diffusion is not reported as
+        physical scattering.
+\end{itemize}
+
+\textbf{Acceptance gate.} $\nu_{\mathrm{eff}}(\text{beam off})\approx\nu_{\mathrm{noise}}
+\ll \nu_{\mathrm{eff}}(\text{beam on})$; $\nu_{\mathrm{eff}}\gg\nu_{ei}$; convergence in tracer
+sampling interval, ppc and $\Delta t$; autocorrelation fit with adequate $R^2$.
+
+\subsection{Phase 6: Heat-Transport Boundaries and $\kappa_{\mathrm{eff}}$}
+
+\textbf{Goal.} Turn the $q_\parallel$ diagnostic into a defensible conductivity measurement.
+
+\begin{itemize}[leftmargin=*]
+  \item Replace the heuristic of \texttt{step6/verify\_gradient\_physics.py} (peak-$E$ timing and
+        $3.5^{2.5}$ normalization) by a direct measurement: maintain a temperature gradient,
+        compute the signed local moment
+        $q_\parallel(x)=\sum \frac12 m_e v_\parallel|\mathbf{v}|^2 w$ with the bulk-drift
+        contribution removed, fit $\nabla T_e$, and report $\kappa_{\mathrm{eff}}=-q_\parallel/\nabla T_e$
+        together with $\kappa_{\mathrm{eff}}/\kappa_{\mathrm{Sp}}$.
+  \item Fix the flux bug: Step~6 uses \texttt{std::abs()} in the MPI reduction of $q_\parallel$,
+        destroying the direction of heat flow. Use signed sums.
+  \item Make the boundaries genuinely open: hot/cold Maxwellian reinjection (adapted from
+        \texttt{gradient\_main.cpp}, with thread-safe RNG and consistent treatment of both
+        species) and MPI end ranks using \texttt{MPI\_PROC\_NULL}. Keep periodic boundaries only
+        for instability benchmarks, because they hide net axial heat loss.
+  \item Add an optional Coulomb collision operator (binary/Krook/Dougherty) so a beam-off case can
+        reproduce the Spitzer--H\"arm baseline; otherwise state explicitly that the comparison is
+        to the analytic $\kappa_{\mathrm{Sp}}(n,T,\nu_{ei})$ formula.
+\end{itemize}
+
+\textbf{Acceptance gate.} Beam off: $\kappa_{\mathrm{eff}}/\kappa_{\mathrm{Sp}}\approx1$ within
+tolerance. Beam on: $\kappa_{\mathrm{eff}}/\kappa_{\mathrm{Sp}}<1$ with
+$\nu_{\mathrm{eff}}\gg\nu_{ei}$, and heat flux directed hot $\rightarrow$ cold.
+
+\subsection{Phase 7: GOL-3 Magnetic Geometry and Ion Dynamics}
+
+\textbf{Goal.} Separate turbulent scattering from mirror confinement.
+
+\begin{itemize}[leftmargin=*]
+  \item Activate the full 3V Vay pusher with $B_z$: first uniform, then a multiple-mirror profile
+        $B(x)=B_0[1+\epsilon\cos(k_m x)]$ or an equivalent mirror geometry.
+  \item Add the magnetic-moment diagnostic $\mu=m_e v_\perp^2/(2B)$ and mirror-reflection counts.
+  \item Run the $2\times2$ matrix \{beam on/off\} $\times$ \{mirror on/off\} to attribute axial
+        suppression to turbulence versus mirror trapping.
+  \item Add mobile ions with a realistic mass ratio only if modulational instability and caviton
+        collapse must be resolved; otherwise document the frozen-ion limitation.
+\end{itemize}
+
+\textbf{Acceptance gate.} Single-particle $\mu$ conservation and mirror reflection correct;
+turbulent and mirror contributions to suppression quantified separately.
+
+\subsection{Phase 8: Optional 2D3V Extension and Performance}
+
+Extend the domain decomposition to 2D for transverse mode coupling and cavitation, and reuse the
+phase-timing instrumentation already present in \texttt{gradient\_main.cpp}
+(\texttt{t\_dep}, \texttt{t\_comm}, \texttt{t\_fft}, \texttt{t\_push}, \ldots) for strong-scaling
+tests. This phase is optional for the minimum 1D3V microscopic-scattering capability.
+
+\subsection{Phase 9: Integrated Validation and Production Campaign}
+
+\begin{itemize}[leftmargin=*]
+  \item Provide one \texttt{run\_all\_tests.sh} producing a PASS/FAIL matrix against the checklist
+        in \texttt{gol3\_code\_requirements\_microscopic\_scattering.tex}: kinetics, beam/plasma
+        drive, self-consistent fields, pusher, resolution, boundaries, $E(k,\omega)$, phase space,
+        tracers, $\nu_{\mathrm{eff}}$, $q_\parallel$, $\kappa_{\mathrm{eff}}$, conservation and
+        convergence.
+  \item Perform a parameter scan over $n_b/n_p$, $v_b/\gamma_b$, $T_e$ and mirror amplitude
+        $\epsilon$, with convergence in $\Delta x$, $\Delta t$, ppc and $L$.
+  \item Regenerate \texttt{implementation\_validation\_report*.tex} with real plots and update the
+        design notes to reflect the final capability.
+\end{itemize}
+
+\section{Highest-Priority Quick Fixes}
+
+\begin{enumerate}[leftmargin=*]
+  \item Wire the verified Vay pusher and TSC deposition/spectral solver into the production chain
+        (Phase~2).
+  \item Remove \texttt{std::abs()} from the $q_\parallel$ MPI reduction and replace the
+        $3.5^{2.5}$ suppression heuristic with $\kappa_{\mathrm{eff}}=-q_\parallel/\nabla T_e$
+        (Phase~6).
+  \item Lengthen Step~6 runs from 15\,ps to at least several beam transits or hundreds of plasma
+        periods (Phase~3).
+  \item Add $\nu_{\mathrm{eff}}$ measurement from tracers with a no-beam noise baseline; this is
+        the quantity on which the microscopic-scattering claim rests (Phase~5).
+  \item Fix the Step~3 growth-rate discrepancy before trusting any turbulence result (Phase~1).
+\end{enumerate}
+
+\section{Suggested Repository Layout and Test Harness}
+
+\begin{lstlisting}
+vGOL-3/
+  src/            shared PIC core (pusher, deposit, field, diagnostics, io)
+  cases/          two_stream, langmuir_turbulence, heat_flux, mirror
+  tests/          step1_orbit, step2_oscillation, step3_growth, step4_mpi,
+                  step5_tracer, step6_gol3
+  config/         run parameter files
+  results/        CSV and figures generated by verification runs
+  run_all_tests.sh
+\end{lstlisting}
+
+Every test directory should contain a small driver, a reference output and a PASS/FAIL script, so
+that \texttt{make test} or \texttt{run\_all\_tests.sh} can be used as a single regression gate
+before and after each phase.
+
+\section{Summary Acceptance Matrix}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.30\textwidth}p{0.62\textwidth}}
+\toprule
+\textbf{Capability} & \textbf{Quantitative evidence required} \\
+\midrule
+Relativistic kinetics & Step~1 orbit $R_L$, $\omega_c$, $\gamma$ within $0.1\%$; used in production runs \\
+\midrule
+Beam--plasma drive & $\Gamma$ within $\sim20\%$ of dispersion solution; bitwise thread reproducibility \\
+\midrule
+Field solver / noise & $\omega_{pe}$ within $\sim1\%$; heating $<0.1\%$ over $1000\,\omega_{pe}^{-1}$ \\
+\midrule
+Resolution / duration & $\Delta x\lesssim\lambda_D$, $\omega_{pe}\Delta t\ll1$, run $\gg L/v_b$ \\
+\midrule
+Strong turbulence & Exponential growth then saturation; $E(k,\omega)$ peak near $\omega_{pe}$; plateau in $f_e(v_\parallel)$ \\
+\midrule
+Microscopic scattering & $\nu_{\mathrm{eff}}\gg\nu_{ei}$ and $\gg$ no-beam noise; resonant and strong-kick events counted \\
+\midrule
+Anomalous conductivity & $\kappa_{\mathrm{eff}}/\kappa_{\mathrm{Sp}}<1$ with beam, $\approx1$ without beam; signed hot-to-cold flux \\
+\midrule
+GOL-3 geometry & Mirror $\mu$ conservation; turbulence and mirror contributions separated \\
+\midrule
+Validation & All tests pass from \texttt{run\_all\_tests.sh}; convergence in $\Delta x$, $\Delta t$, ppc, $L$ demonstrated \\
+\bottomrule
+\end{tabular}
+\caption{Final acceptance matrix for microscopic-scattering capability.}
+\end{table}
+
+\section{Conclusion}
+
+The existing \texttt{vGOL-3} workspace already contains the individual physical and numerical
+ingredients required for microscopic-scattering simulations. The work is therefore integration and
+validation rather than invention: unify the verified pusher, high-order deposition and field solver
+into one core; repair the linear-growth and heat-flux diagnostics; extend the run duration and
+boundary conditions to make axial transport meaningful; and add tracer-based $\nu_{\mathrm{eff}}$
+and $\kappa_{\mathrm{eff}}$ measurements. Following Phases~0--7 yields the minimum 1D3V capability
+specified in the requirements note, with Phases~8--9 providing the extended geometry, performance
+and publication-grade validation.
+
+\end{document}
